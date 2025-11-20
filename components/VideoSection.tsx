@@ -74,8 +74,66 @@ const VideoSection = () => {
 
   // Initialize YouTube IFrame API
   useEffect(() => {
-    // Load YouTube IFrame API if not already present
-    if (!(window as any).YT || !(window as any).YT.Player) {
+    let mounted = true;
+
+    // Function to create the player
+    const createPlayer = () => {
+      if (!mounted) return;
+
+      const playerElement = document.getElementById('youtube-player');
+      if (!playerElement) {
+        console.error('Player element not found');
+        return;
+      }
+
+      try {
+        new (window as any).YT.Player('youtube-player', {
+          events: {
+            onReady: (event: any) => {
+              if (!mounted) return;
+              playerRef.current = event.target;
+              setPlayer(event.target);
+              // Immediately mute on ready to keep autoplay unblocked
+              event.target.mute();
+            },
+            onStateChange: (event: any) => {
+              if (!mounted) return;
+              // When video starts playing, fade in sound
+              if (event.data === (window as any).YT.PlayerState.PLAYING && !hasStartedPlayingRef.current) {
+                hasStartedPlayingRef.current = true;
+
+                const wantsSound = !userMutedRef.current; // auto-unmute every load unless user muted this session
+                if (wantsSound) {
+                  event.target.unMute();
+                  setIsMuted(false);
+
+                  let volume = 0;
+                  event.target.setVolume(0);
+
+                  const fadeInterval = setInterval(() => {
+                    volume += 10;
+                    if (volume >= 100) {
+                      volume = 100;
+                      clearInterval(fadeInterval);
+                    }
+                    event.target.setVolume(volume);
+                  }, 80); // 10 steps * 80ms = 800ms total fade
+                }
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error creating YouTube player:', error);
+      }
+    };
+
+    // Check if YouTube API is already loaded
+    if ((window as any).YT && (window as any).YT.Player) {
+      // API already loaded, create player immediately
+      createPlayer();
+    } else {
+      // Load YouTube IFrame API if not already present
       const existingScript = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
       if (!existingScript) {
         const tag = document.createElement('script');
@@ -83,49 +141,21 @@ const VideoSection = () => {
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
       }
+
+      // Set up callback for when API is ready
+      (window as any).onYouTubeIframeAPIReady = () => {
+        createPlayer();
+      };
     }
 
-    // Create player when API is ready
-    (window as any).onYouTubeIframeAPIReady = () => {
-      new (window as any).YT.Player('youtube-player', {
-        events: {
-          onReady: (event: any) => {
-            playerRef.current = event.target;
-            setPlayer(event.target);
-            // Immediately mute on ready to keep autoplay unblocked
-            event.target.mute();
-          },
-          onStateChange: (event: any) => {
-            // When video starts playing, fade in sound
-            if (event.data === (window as any).YT.PlayerState.PLAYING && !hasStartedPlayingRef.current) {
-              hasStartedPlayingRef.current = true;
-
-              const wantsSound = !userMutedRef.current; // auto-unmute every load unless user muted this session
-              if (wantsSound) {
-                event.target.unMute();
-                setIsMuted(false);
-
-                let volume = 0;
-                event.target.setVolume(0);
-
-                const fadeInterval = setInterval(() => {
-                  volume += 10;
-                  if (volume >= 100) {
-                    volume = 100;
-                    clearInterval(fadeInterval);
-                  }
-                  event.target.setVolume(volume);
-                }, 80); // 10 steps * 80ms = 800ms total fade
-              }
-            }
-          }
-        }
-      });
-    };
-
     return () => {
-      if (playerRef.current) {
-        playerRef.current.destroy();
+      mounted = false;
+      if (playerRef.current && playerRef.current.destroy) {
+        try {
+          playerRef.current.destroy();
+        } catch (error) {
+          console.error('Error destroying player:', error);
+        }
       }
     };
   }, []);
@@ -148,10 +178,10 @@ const VideoSection = () => {
   // YouTube embed parameters for immersive experience (manual playback trigger)
   const embedParams = new URLSearchParams({
     autoplay: '0', // We'll start manually when sunrise sequence is nearly done
-    mute: '1', // Start muted to satisfy autoplay policies
+    mute: '0', // Allow user to control sound
     loop: '1',
     playlist: videoId, // Required for loop to work
-    controls: '0',
+    controls: '1', // Show YouTube controls so user can play
     modestbranding: '1',
     rel: '0',
     showinfo: '0',
@@ -175,7 +205,7 @@ const VideoSection = () => {
         <div className="absolute inset-0 w-full h-full">
           <iframe
             id="youtube-player"
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
             style={{
               width: '100vw',
               height: '100vh',
